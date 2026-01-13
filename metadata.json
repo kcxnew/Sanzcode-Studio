@@ -1,0 +1,7 @@
+{
+  "name": "sanztech_studio",
+  "description": "A feature-rich developer playground for testing Gemini models with system instructions, chat history, and real-time parameter tuning.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
