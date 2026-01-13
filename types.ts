@@ -8,6 +8,7 @@ export interface Message {
   role: Role;
   text: string;
   id: string;
+  thinking?: string;
 }
 
 export interface ChatConfig {
@@ -16,4 +17,5 @@ export interface ChatConfig {
   topP: number;
   topK: number;
   model: string;
+  isThinkingMode: boolean;
 }
