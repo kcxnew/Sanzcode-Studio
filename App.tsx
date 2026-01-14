@@ -60,6 +60,18 @@ interface AttachedFile {
   preview?: string;
 }
 
+interface SelectedElement {
+  tagName: string;
+  id: string;
+  classes: string;
+  rect: DOMRect;
+  styles: {
+    fontSize: string;
+    color: string;
+    backgroundColor: string;
+  };
+}
+
 const App: React.FC = () => {
   const [viewMode, setViewMode] = useState<'preview' | 'code'>('preview');
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
@@ -74,6 +86,7 @@ const App: React.FC = () => {
   const [consoleLogs, setConsoleLogs] = useState<{type: string, msg: string}[]>([]);
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
   const [isListening, setIsListening] = useState(false);
+  const [selectedEl, setSelectedEl] = useState<SelectedElement | null>(null);
   
   const [config, setConfig] = useState<ChatConfig>({
     systemInstruction: "You are a senior web developer with Chrome DevTools access. When building apps, provide HTML/Tailwind code. If images are provided, analyze them for UI/UX inspiration.",
@@ -123,19 +136,21 @@ const App: React.FC = () => {
 
     Array.from(files).forEach(file => {
       const reader = new FileReader();
+      // Fix: Use correct types for file upload event handlers
       if (file.type.startsWith('image/')) {
-        reader.onload = (event) => {
-          const base64 = (event.target?.result as string).split(',')[1];
+        reader.onload = (event: ProgressEvent<FileReader>) => {
+          const result = event.target?.result as string;
+          const base64 = result.split(',')[1];
           setAttachments(prev => [...prev, { 
             name: file.name, 
             type: file.type, 
             data: base64, 
-            preview: event.target?.result as string 
+            preview: result 
           }]);
         };
         reader.readAsDataURL(file);
       } else {
-        reader.onload = (event) => {
+        reader.onload = (event: ProgressEvent<FileReader>) => {
           setAttachments(prev => [...prev, { 
             name: file.name, 
             type: file.type, 
@@ -172,15 +187,17 @@ const App: React.FC = () => {
     }
   };
 
-  const handleSend = async () => {
-    if ((!input.trim() && attachments.length === 0) || isLoading) return;
+  // Fix: handleSend now accepts an optional text parameter for refinement logic
+  const handleSend = async (overrideInput?: string) => {
+    const currentInput = typeof overrideInput === 'string' ? overrideInput : input;
+    if ((!currentInput.trim() && attachments.length === 0) || isLoading) return;
 
     if (isListening) {
       recognitionRef.current?.stop();
       setIsListening(false);
     }
 
-    const userMsg: Message = { role: Role.USER, text: input, id: Date.now().toString() };
+    const userMsg: Message = { role: Role.USER, text: currentInput, id: Date.now().toString() };
     setMessages(prev => [...prev, userMsg]);
     const currentAttachments = [...attachments];
     setAttachments([]);
@@ -191,7 +208,7 @@ const App: React.FC = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
       const activeModel = config.isThinkingMode ? 'gemini-3-pro-preview' : config.model;
       
-      const parts: any[] = [{ text: input }];
+      const parts: any[] = [{ text: currentInput }];
       currentAttachments.forEach(file => {
         if (file.type.startsWith('image/')) {
           parts.push({ inlineData: { mimeType: file.type, data: file.data } });
@@ -246,15 +263,33 @@ const App: React.FC = () => {
     }
   };
 
+  // Inspector logic
   useEffect(() => {
     const handleMessage = (e: MessageEvent) => {
       if (e.data.type === 'console') {
         setConsoleLogs(prev => [...prev.slice(-49), { type: e.data.level, msg: e.data.msg }]);
       }
+      if (e.data.type === 'inspect') {
+        setSelectedEl({
+          tagName: e.data.tagName,
+          id: e.data.id,
+          classes: e.data.classes,
+          rect: e.data.rect,
+          styles: e.data.styles
+        });
+      }
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, []);
+
+  const getDeviceWidth = () => {
+    switch(deviceFrame) {
+      case 'mobile': return '375px';
+      case 'tablet': return '768px';
+      default: return '100%';
+    }
+  };
 
   return (
     <div className="flex h-screen w-full bg-studio-dark text-gray-200 overflow-hidden font-sans">
@@ -270,6 +305,15 @@ const App: React.FC = () => {
               <button onClick={() => setViewMode('preview')} className={`flex items-center gap-2 px-3 py-1 text-xs font-bold uppercase rounded-md ${viewMode === 'preview' ? 'bg-studio-border text-blue-400' : 'text-gray-500'}`}><Eye size={14} /> Preview</button>
               <button onClick={() => setViewMode('code')} className={`flex items-center gap-2 px-3 py-1 text-xs font-bold uppercase rounded-md ${viewMode === 'code' ? 'bg-studio-border text-blue-400' : 'text-gray-500'}`}><Code size={14} /> Code</button>
             </div>
+            <button 
+              onClick={() => {
+                setIsAnnotating(!isAnnotating);
+                if (isAnnotating) setSelectedEl(null);
+              }} 
+              className={`flex items-center gap-2 px-3 py-1 text-xs font-bold uppercase rounded-md transition-all ${isAnnotating ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-studio-input'}`}
+            >
+              <Search size={14} /> {isAnnotating ? 'Exit Annotate' : 'Annotate'}
+            </button>
           </div>
           <div className="flex items-center gap-2">
              <button onClick={() => setConfig(prev => ({ ...prev, isThinkingMode: !prev.isThinkingMode }))} className={`p-2 rounded-lg transition-all ${config.isThinkingMode ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-500 hover:bg-studio-input'}`} title="Thinking Mode"><BrainCircuit size={18} /></button>
@@ -307,20 +351,23 @@ const App: React.FC = () => {
                   />
                   <div className="absolute right-2 bottom-2 flex gap-1">
                     <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" multiple />
-                    <button onClick={() => fileInputRef.current?.click()} className="p-1.5 text-gray-500 hover:text-blue-400"><Paperclip size={18} /></button>
+                    <button onClick={() => fileInputRef.current?.click()} className="p-1.5 text-gray-500 hover:text-blue-400" title="Upload Files"><Paperclip size={18} /></button>
                   </div>
                 </div>
                 <div className="flex flex-col gap-2">
                    <button onClick={toggleListening} className={`p-2.5 rounded-xl transition-all ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-studio-input text-gray-500 hover:text-white'}`}><Mic size={18} /></button>
-                   <button onClick={handleSend} disabled={isLoading} className="p-2.5 bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50"><Send size={18} /></button>
+                   <button onClick={() => handleSend()} disabled={isLoading} className="p-2.5 bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50"><Send size={18} /></button>
                 </div>
               </div>
             </div>
           </div>
 
           <div className="flex-1 bg-[#070809] flex flex-col overflow-hidden relative">
-            <div className="flex-1 p-4 flex flex-col gap-4 overflow-hidden">
-              <div className="flex-1 bg-white rounded-xl shadow-2xl overflow-hidden relative">
+            <div className="flex-1 p-4 flex flex-col gap-4 overflow-hidden items-center">
+              <div 
+                className="flex-1 bg-white rounded-xl shadow-2xl overflow-hidden relative transition-all duration-500"
+                style={{ width: getDeviceWidth() }}
+              >
                 <iframe ref={iframeRef} srcDoc={`
                   <!DOCTYPE html>
                   <html>
@@ -330,15 +377,125 @@ const App: React.FC = () => {
                         const originalLog = console.log;
                         console.log = (...args) => window.parent.postMessage({ type: 'console', level: 'log', msg: args.join(' ') }, '*');
                         console.error = (...args) => window.parent.postMessage({ type: 'console', level: 'error', msg: args.join(' ') }, '*');
+
+                        // Inspector helper
+                        document.addEventListener('mouseover', (e) => {
+                          if (!window.__annotating) return;
+                          e.target.style.outline = '2px solid #3b82f6';
+                          e.target.style.outlineOffset = '-2px';
+                        });
+                        document.addEventListener('mouseout', (e) => {
+                          if (!window.__annotating) return;
+                          e.target.style.outline = '';
+                        });
+                        document.addEventListener('click', (e) => {
+                          if (!window.__annotating) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const styles = window.getComputedStyle(e.target);
+                          window.parent.postMessage({
+                            type: 'inspect',
+                            tagName: e.target.tagName,
+                            id: e.target.id,
+                            classes: e.target.className,
+                            rect: e.target.getBoundingClientRect(),
+                            styles: {
+                              fontSize: styles.fontSize,
+                              color: styles.color,
+                              backgroundColor: styles.backgroundColor
+                            }
+                          }, '*');
+                        });
+                        window.addEventListener('message', (e) => {
+                          if (e.data.type === 'toggle-annotate') window.__annotating = e.data.active;
+                        });
                       </script>
-                      <style>body { transition: all 0.3s ease; }</style>
+                      <style>
+                        body { transition: all 0.3s ease; margin: 0; min-height: 100vh; cursor: default; }
+                      </style>
                     </head>
                     <body><div id="root">${generatedCode}</div></body>
                   </html>
-                `} className="w-full h-full border-none" />
+                `} 
+                onLoad={() => iframeRef.current?.contentWindow?.postMessage({ type: 'toggle-annotate', active: isAnnotating }, '*')}
+                className="w-full h-full border-none" 
+                />
+
+                {/* Annotation Tooltip */}
+                {selectedEl && isAnnotating && (
+                  <div 
+                    className="absolute z-50 bg-studio-sidebar border border-studio-border rounded-xl shadow-2xl p-4 w-72 animate-in zoom-in-95 fade-in duration-200"
+                    style={{ 
+                      left: Math.min(selectedEl.rect.left + 20, window.innerWidth - 300), 
+                      top: Math.min(selectedEl.rect.top + 20, window.innerHeight - 300) 
+                    }}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                         <span className="text-[10px] font-black bg-blue-600/20 text-blue-400 px-2 py-0.5 rounded">&lt;{selectedEl.tagName.toLowerCase()}&gt;</span>
+                         {selectedEl.id && <span className="text-[10px] text-gray-500 font-mono">#{selectedEl.id}</span>}
+                      </div>
+                      <button onClick={() => setSelectedEl(null)} className="text-gray-500 hover:text-white"><X size={14} /></button>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="bg-studio-input p-2 rounded-lg border border-studio-border">
+                        <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Responsive Preview</label>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => setDeviceFrame('desktop')} 
+                            className={`flex-1 p-2 rounded flex flex-col items-center gap-1 transition-all ${deviceFrame === 'desktop' ? 'bg-blue-600/20 text-blue-400' : 'bg-studio-sidebar text-gray-600'}`}
+                          >
+                            <Monitor size={16} />
+                            <span className="text-[8px] font-bold">DESK</span>
+                          </button>
+                          <button 
+                            onClick={() => setDeviceFrame('tablet')} 
+                            className={`flex-1 p-2 rounded flex flex-col items-center gap-1 transition-all ${deviceFrame === 'tablet' ? 'bg-blue-600/20 text-blue-400' : 'bg-studio-sidebar text-gray-600'}`}
+                          >
+                            <Tablet size={16} />
+                            <span className="text-[8px] font-bold">TAB</span>
+                          </button>
+                          <button 
+                            onClick={() => setDeviceFrame('mobile')} 
+                            className={`flex-1 p-2 rounded flex flex-col items-center gap-1 transition-all ${deviceFrame === 'mobile' ? 'bg-blue-600/20 text-blue-400' : 'bg-studio-sidebar text-gray-600'}`}
+                          >
+                            <Smartphone size={16} />
+                            <span className="text-[8px] font-bold">MOB</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="bg-studio-input p-2 rounded-lg border border-studio-border">
+                           <label className="text-[8px] font-bold text-gray-600 uppercase block">Font Size</label>
+                           <span className="text-[10px] font-mono text-gray-300">{selectedEl.styles.fontSize}</span>
+                        </div>
+                        <div className="bg-studio-input p-2 rounded-lg border border-studio-border">
+                           <label className="text-[8px] font-bold text-gray-600 uppercase block">Color</label>
+                           <div className="flex items-center gap-1">
+                              <div className="w-2 h-2 rounded-full border border-white/20" style={{ backgroundColor: selectedEl.styles.color }} />
+                              <span className="text-[9px] font-mono text-gray-300 truncate">{selectedEl.styles.color}</span>
+                           </div>
+                        </div>
+                      </div>
+
+                      <button 
+                        onClick={() => {
+                          handleSend(`Inspect this <${selectedEl.tagName.toLowerCase()}> element with classes "${selectedEl.classes}". It currently has font size ${selectedEl.styles.fontSize}. Make it look more premium.`);
+                          setSelectedEl(null);
+                          setIsAnnotating(false);
+                        }}
+                        className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold rounded-lg transition-all flex items-center justify-center gap-2"
+                      >
+                        <Wand2 size={12} /> Refine with AI
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
               
-              <div className="h-40 bg-studio-sidebar border border-studio-border rounded-xl flex flex-col overflow-hidden">
+              <div className="h-40 w-full bg-studio-sidebar border border-studio-border rounded-xl flex flex-col overflow-hidden">
                 <div className="h-8 border-b border-studio-border bg-studio-input flex items-center px-3 justify-between">
                   <div className="flex items-center gap-2 text-[10px] font-bold text-gray-500 uppercase tracking-widest"><Terminal size={12} /> Console</div>
                   <button onClick={() => setConsoleLogs([])} className="text-[9px] hover:text-white uppercase">Clear</button>
@@ -350,6 +507,7 @@ const App: React.FC = () => {
                       <span>{log.msg}</span>
                     </div>
                   ))}
+                  {consoleLogs.length === 0 && <div className="text-gray-600 italic">No logs...</div>}
                 </div>
               </div>
             </div>
