@@ -69,6 +69,8 @@ interface SelectedElement {
     fontSize: string;
     color: string;
     backgroundColor: string;
+    fontFamily: string;
+    lineHeight: string;
   };
 }
 
@@ -136,7 +138,6 @@ const App: React.FC = () => {
 
     Array.from(files).forEach(file => {
       const reader = new FileReader();
-      // Fix: Use correct types for file upload event handlers
       if (file.type.startsWith('image/')) {
         reader.onload = (event: ProgressEvent<FileReader>) => {
           const result = event.target?.result as string;
@@ -187,7 +188,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Fix: handleSend now accepts an optional text parameter for refinement logic
   const handleSend = async (overrideInput?: string) => {
     const currentInput = typeof overrideInput === 'string' ? overrideInput : input;
     if ((!currentInput.trim() && attachments.length === 0) || isLoading) return;
@@ -263,7 +263,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Inspector logic
   useEffect(() => {
     const handleMessage = (e: MessageEvent) => {
       if (e.data.type === 'console') {
@@ -402,7 +401,9 @@ const App: React.FC = () => {
                             styles: {
                               fontSize: styles.fontSize,
                               color: styles.color,
-                              backgroundColor: styles.backgroundColor
+                              backgroundColor: styles.backgroundColor,
+                              fontFamily: styles.fontFamily,
+                              lineHeight: styles.lineHeight
                             }
                           }, '*');
                         });
@@ -480,9 +481,23 @@ const App: React.FC = () => {
                         </div>
                       </div>
 
+                      <div className="bg-studio-input p-2 rounded-lg border border-studio-border">
+                        <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Typography</label>
+                        <div className="space-y-1">
+                          <div className="flex justify-between items-center">
+                            <span className="text-[8px] text-gray-600 font-bold uppercase">Family</span>
+                            <span className="text-[9px] font-mono text-gray-300 truncate max-w-[120px]" title={selectedEl.styles.fontFamily}>{selectedEl.styles.fontFamily.split(',')[0]}</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-[8px] text-gray-600 font-bold uppercase">Line Height</span>
+                            <span className="text-[9px] font-mono text-gray-300">{selectedEl.styles.lineHeight}</span>
+                          </div>
+                        </div>
+                      </div>
+
                       <button 
                         onClick={() => {
-                          handleSend(`Inspect this <${selectedEl.tagName.toLowerCase()}> element with classes "${selectedEl.classes}". It currently has font size ${selectedEl.styles.fontSize}. Make it look more premium.`);
+                          handleSend(`Inspect this <${selectedEl.tagName.toLowerCase()}> element with classes "${selectedEl.classes}". It currently has font size ${selectedEl.styles.fontSize}, font family ${selectedEl.styles.fontFamily}, and line-height ${selectedEl.styles.lineHeight}. Make it look more premium.`);
                           setSelectedEl(null);
                           setIsAnnotating(false);
                         }}
